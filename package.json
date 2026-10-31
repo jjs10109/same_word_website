@@ -1,0 +1,9 @@
+{
+  "name": "tongci-xiangyu",
+  "version": "1.0.0",
+  "private": true,
+  "description": "双人实时同词相遇游戏",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "express": "^4.21.2", "socket.io": "^4.8.1" }
+}
