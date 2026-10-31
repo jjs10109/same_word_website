@@ -56,32 +56,33 @@ function lnotify(r){
  for(const p of r.players){
   const sock=io.sockets.sockets.get(p.socketId);if(!sock)continue;
   sock.emit('liar:state',{
-   code:r.code, players:r.players.map(x=>({id:x.id,name:x.name,connected:x.connected,lives:x.lives,cards:x.hand.length,alive:x.lives>0})),
+   code:r.code, players:r.players.map(x=>({id:x.id,name:x.name,connected:x.connected,lives:x.lives,shots:x.shots,eliminated:x.eliminated,cards:x.hand.length,alive:!x.eliminated})),
    me:p.id, hand:p.hand, target:r.target,turn:r.turn,phase:r.phase,pileCount:r.pile.length,
    lastPlay:r.lastPlay?{playerId:r.lastPlay.playerId,count:r.lastPlay.cards.length}:null,
-   lastOutcome:r.lastOutcome, winner:r.winner, log:r.log.slice(-12), round:r.round
+   lastOutcome:r.lastOutcome, punishment:r.punishment?{playerId:r.punishment.playerId,name:r.punishment.name}:null, winner:r.winner, log:r.log.slice(-12), round:r.round
   });
  }
 }
 function ldeck(){const d=[];for(const rank of ['A','K','Q'])for(let i=0;i<8;i++)d.push({id:crypto.randomUUID(),rank});for(let i=0;i<4;i++)d.push({id:crypto.randomUUID(),rank:'JOKER'});return d.sort(()=>Math.random()-.5);}
-function nextAlive(r,index){for(let n=1;n<=r.players.length;n++){const i=(index+n)%r.players.length;if(r.players[i].lives>0)return i;}return index;}
-function ldeal(r,starter=0){const deck=ldeck();r.players.forEach(p=>p.hand=p.lives>0?deck.splice(0,5):[]);r.target=['A','K','Q'][Math.floor(Math.random()*3)];r.pile=[];r.lastPlay=null;r.phase='play';r.turn=r.players[starter]?.lives>0?starter:nextAlive(r,starter);r.round++;r.log.push('新一局开始，本局目标牌：'+r.target);}
+function nextAlive(r,index){for(let n=1;n<=r.players.length;n++){const i=(index+n)%r.players.length;if(!r.players[i].eliminated)return i;}return index;}
+function ldeal(r,starter=0){const deck=ldeck();r.players.forEach(p=>p.hand=!p.eliminated?deck.splice(0,5):[]);r.target=['A','K','Q'][Math.floor(Math.random()*3)];r.pile=[];r.lastPlay=null;r.phase='play';r.turn=!r.players[starter]?.eliminated?starter:nextAlive(r,starter);r.round++;r.log.push('新一局开始，本局目标牌：'+r.target);}
 function ljoin(sock,r,name,id){
  let p=r.players.find(x=>x.id===id);
- if(!p){if(r.phase!=='lobby')return lerr(sock,'游戏已经开始，无法加入新玩家');if(r.players.length>=4)return lerr(sock,'房间最多 4 人');p={id:crypto.randomUUID(),name:String(name||'玩家').trim().slice(0,12)||'玩家',socketId:sock.id,connected:true,lives:3,hand:[]};r.players.push(p);}
+ if(!p){if(r.phase!=='lobby')return lerr(sock,'游戏已经开始，无法加入新玩家');if(r.players.length>=4)return lerr(sock,'房间最多 4 人');p={id:crypto.randomUUID(),name:String(name||'玩家').trim().slice(0,12)||'玩家',socketId:sock.id,connected:true,lives:3,shots:0,eliminated:false,hand:[]};r.players.push(p);}
  p.socketId=sock.id;p.connected=true;sock.data.liarCode=r.code;sock.data.liarId=p.id;sock.join('liar-'+r.code);sock.emit('liar:joined',{code:r.code,playerId:p.id});lnotify(r);
 }
 io.on('connection',sock=>{
  sock.on('liar:create',({name}={})=>{const c=liarCode();const r={code:c,players:[],round:0,phase:'lobby',turn:0,pile:[],lastPlay:null,target:null,lastOutcome:null,log:[],winner:null};liarRooms.set(c,r);ljoin(sock,r,name);});
  sock.on('liar:join',({code,name,playerId}={})=>{const r=liarRooms.get(String(code||'').toUpperCase().trim());if(!r)return lerr(sock,'找不到房间');ljoin(sock,r,name,playerId);});
- sock.on('liar:start',()=>{const r=lroom(sock);if(!r||r.players[0]?.id!==sock.data.liarId||r.phase!=='lobby')return lerr(sock,'只有房主可以开始');if(r.players.length<2)return lerr(sock,'至少需要两名玩家');r.players.forEach(p=>p.lives=3);ldeal(r,0);lnotify(r);});
+ sock.on('liar:start',()=>{const r=lroom(sock);if(!r||r.players[0]?.id!==sock.data.liarId||r.phase!=='lobby')return lerr(sock,'只有房主可以开始');if(r.players.length<2)return lerr(sock,'至少需要两名玩家');r.players.forEach(p=>{p.lives=3;p.shots=0;p.eliminated=false});ldeal(r,0);lnotify(r);});
  sock.on('liar:play',({ids}={})=>{const r=lroom(sock);if(!r||r.phase!=='play'||r.players[r.turn]?.id!==sock.data.liarId)return lerr(sock,'还没轮到你出牌');const p=r.players[r.turn];if(!Array.isArray(ids)||ids.length<1||ids.length>3||new Set(ids).size!==ids.length)return lerr(sock,'每次选择 1–3 张牌');const cards=ids.map(id=>p.hand.find(c=>c.id===id));if(cards.some(c=>!c))return lerr(sock,'选择了无效的牌');p.hand=p.hand.filter(c=>!ids.includes(c.id));r.pile.push(...cards);r.lastPlay={playerId:p.id,cards};r.phase='respond';r.turn=nextAlive(r,r.turn);r.log.push(p.name+' 扣下 '+cards.length+' 张牌，声称都是 '+r.target);lnotify(r);});
  sock.on('liar:accept',()=>{const r=lroom(sock);if(!r||r.phase!=='respond'||r.players[r.turn]?.id!==sock.data.liarId)return lerr(sock,'现在不能继续');const p=r.players[r.turn];if(!p.hand.length){r.log.push(p.name+' 没有手牌，自动质疑');resolveChallenge(r,p);return;}r.phase='play';r.log.push(p.name+' 选择相信，继续出牌');lnotify(r);});
  sock.on('liar:challenge',()=>{const r=lroom(sock);if(!r||r.phase!=='respond'||r.players[r.turn]?.id!==sock.data.liarId)return lerr(sock,'现在不能质疑');resolveChallenge(r,r.players[r.turn]);});
- sock.on('liar:next',()=>{const r=lroom(sock);if(!r||r.phase!=='result')return;const active=r.players.filter(p=>p.lives>0);if(active.length<=1){r.phase='finished';r.winner=active[0]?.id||null;}else{const starter=r.players.findIndex(p=>p.id===r.nextStarter);r.lastOutcome=null;ldeal(r,starter<0?0:starter);}lnotify(r);});
+ sock.on('liar:punish',()=>{const r=lroom(sock);if(!r||r.phase!=='punishment'||!r.punishment)return lerr(sock,'当前没有待执行惩罚');if(sock.data.liarId!==r.punishment.playerId)return lerr(sock,'必须由受罚玩家自己按下扳机');const p=r.players.find(x=>x.id===r.punishment.playerId);if(!p)return;const chamber=crypto.randomInt(6-p.shots);const fired=chamber===0;p.shots++;if(fired)p.eliminated=true;r.lastOutcome={...r.lastOutcome,fired,shots:p.shots,eliminated:fired};r.log.push(p.name+' 扣动扳机：'+(fired?'💥 中弹，淘汰！':'咔哒，空枪，幸存！')+'（第 '+p.shots+' 次）');r.punishment=null;r.phase='result';r.nextStarter=!p.eliminated?p.id:r.lastOutcome.challengerId;lnotify(r)});
+ sock.on('liar:next',()=>{const r=lroom(sock);if(!r||r.phase!=='result')return;if(r.punishment)return lerr(sock,'先完成惩罚');const active=r.players.filter(p=>!p.eliminated);if(active.length<=1){r.phase='finished';r.winner=active[0]?.id||null;}else{const starter=r.players.findIndex(p=>p.id===r.nextStarter);r.lastOutcome=null;ldeal(r,starter<0?0:starter);}lnotify(r);});
  sock.on('disconnect',()=>{const r=lroom(sock);if(!r)return;const p=r.players.find(p=>p.id===sock.data.liarId);if(p&&p.socketId===sock.id){p.connected=false;lnotify(r)}});
 });
-function resolveChallenge(r,challenger){const play=r.lastPlay;const liar=play.cards.some(c=>c.rank!==r.target&&c.rank!=='JOKER');const actor=r.players.find(p=>p.id===play.playerId);const loser=liar?actor:challenger;loser.lives=Math.max(0,loser.lives-1);r.lastOutcome={challenger:challenger.name,actor:actor.name,cards:play.cards.map(c=>c.rank),liar,loser:loser.name};r.log.push(challenger.name+' 质疑 '+actor.name+'：'+(liar?'抓到撒谎！':'被反将一军！')+' '+loser.name+' 失去 1 颗心');r.phase='result';r.nextStarter=loser.lives>0?loser.id:challenger.id;lnotify(r);}
+function resolveChallenge(r,challenger){const play=r.lastPlay;const liar=play.cards.some(c=>c.rank!==r.target&&c.rank!=='JOKER');const actor=r.players.find(p=>p.id===play.playerId);const loser=liar?actor:challenger;r.lastOutcome={challenger:challenger.name,challengerId:challenger.id,actor:actor.name,cards:play.cards.map(c=>c.rank),liar,loser:loser.name};r.log.push(challenger.name+' 质疑 '+actor.name+'：'+(liar?'抓到撒谎！':'被反将一军！')+' '+loser.name+' 需要接受轮盘惩罚');r.punishment={playerId:loser.id,name:loser.name};r.phase='punishment';lnotify(r);}
 setInterval(()=>{for(const [c,r] of liarRooms)if(r.players.length&&r.players.every(p=>!p.connected))liarRooms.delete(c)},3600000).unref();
 
 const port=process.env.PORT||3000;
