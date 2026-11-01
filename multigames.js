@@ -8,7 +8,7 @@ function state(r,p){const g=r.g||{};let base={code:r.code,type:r.type,phase:r.ph
 if(r.type==='battleship'){base={...base,setup:g.setup?.[r.players.indexOf(p)]||[],myShots:g.shots?.[r.players.indexOf(p)]||[],theirShots:g.shots?.[other(r,r.players.indexOf(p))]||[],placed:g.setup?.map(a=>a.length===3)||[false,false],hits:g.hits||[0,0]};}
 if(r.type==='codenames'){base={...base,words:g.words||[],targets:g.targets||[],found:g.found||[],mistakes:g.mistakes||0,clue:g.clue||'',roles:['线索员','猜词员'],turn:g.turn||0};if(r.players.indexOf(p)!==0)delete base.targets;}
 if(r.type==='uno'){base={...base,hand:g.hands?.[r.players.indexOf(p)]||[],counts:g.hands?.map(a=>a.length)||[0,0],top:g.top||null,color:g.color||'',draw:g.draw||0};}
-if(r.type==='buckshot'){base={...base,hp:g.hp||[4,4],shells:g.shells?.length||0,live:g.live??0,blank:g.blank??0,items:g.items?.[r.players.indexOf(p)]||[],itemCounts:g.items?.map(a=>a.length)||[0,0],last:g.last||'',peek:g.peek?.[r.players.indexOf(p)]||null};}
+if(r.type==='buckshot'){const ix=r.players.indexOf(p);base={...base,hp:g.hp||[4,4],shells:g.shells?.length||0,live:g.live??0,blank:g.blank??0,items:g.items?.[ix]||[],itemCounts:g.items?.map(a=>a.length)||[0,0],peek:g.peek?.[ix]||null,round:g.round||1,wins:g.wins||[0,0],history:g.history||[],lastShot:g.lastShot||null,shotId:g.shotId||0,sawed:g.sawed===ix,locked:g.locked===ix,roundWinner:g.roundWinner??null,ammoBatch:g.ammoBatch||1};}
 if(r.type==='doudizhu'){base={...base,hand:g.hands?.[r.players.indexOf(p)]||[],counts:g.hands?.map(a=>a.length)||[0,0],last:g.last||null,passes:g.passes||0,landlord:g.landlord??0};}
 return base;}
 function send(r){for(const p of r.players){let s=io.sockets.sockets.get(p.sock);if(s)s.emit('multi:state',state(r,p));}}
@@ -19,10 +19,13 @@ function poker(){let a=[];for(const n of ranks){for(let i=0;i<(n.includes('王')
 function init(r){let g={turn:0,winner:null,log:[]};r.phase='play';if(r.type==='battleship'){r.phase='setup';g.setup=[[],[]];g.shots=[[],[]];g.hits=[0,0];}
 if(r.type==='codenames'){g.words=shuffle([...wordBank]).slice(0,16);g.targets=shuffle([...g.words]).slice(0,6);g.found=[];g.mistakes=0;g.turn=0;g.clue='';r.phase='clue';}
 if(r.type==='uno'){let d=cards();g.hands=[d.splice(0,7),d.splice(0,7)];g.deck=d;g.top=d.pop();while(g.top.c==='黑'){d.unshift(g.top);g.top=d.pop()}g.color=g.top.c;g.draw=0;}
-if(r.type==='buckshot'){g.hp=[4,4];g.items=[['放大镜','香烟'],['放大镜','香烟']];newShells(g);}
+if(r.type==='buckshot'){g.round=1;g.wins=[0,0];startBuckRound(g);}
 if(r.type==='doudizhu'){let d=poker();g.hands=[d.splice(0,17),d.splice(0,17)];g.landlord=rnd(2);g.turn=g.landlord;g.last=null;g.passes=0;}
 r.g=g;send(r)}
-function newShells(g){let n=4+rnd(3),live=1+rnd(n-1);g.shells=shuffle([...Array(live)].map(()=>1).concat([...Array(n-live)].map(()=>0)));g.live=live;g.blank=n-live;g.peek=[null,null];}
+const buckItems=['放大镜','香烟','啤酒','手铐','手锯'];
+function newShells(g){let n=4+rnd(4),live=1+rnd(n);g.shells=shuffle(Array(live).fill(1).concat(Array(n-live).fill(0)));g.live=live;g.blank=n-live;g.peek=[null,null];g.ammoBatch=(g.ammoBatch||0)+1;g.history.push({kind:'reload',round:g.round,batch:g.ammoBatch,live,blank:n-live});g.items.forEach(a=>{while(a.length<4)a.push(buckItems[rnd(buckItems.length)])});}
+function startBuckRound(g){g.hp=[4,4];g.items=[[],[]];g.peek=[null,null];g.sawed=null;g.locked=null;g.roundWinner=null;g.turn=(g.round-1)%2;g.ammoBatch=0;g.history=[];g.lastShot=null;g.shotId=0;newShells(g);g.log.push('第 '+g.round+' 局开始，双方恢复至 4 HP');}
+function buckRoundEnd(r,loser){let g=r.g,w=1-loser;g.wins[w]++;g.roundWinner=w;g.log.push(r.players[w].name+' 赢得第 '+g.round+' 局');if(g.wins[w]===2){g.winner=w;r.phase='finished';}else{r.phase='round_end';}send(r)}
 function end(r,w){r.g.winner=w;r.phase='finished';send(r)}
 function act(s,action,data={}){let r=get(s);if(!r||r.phase==='lobby')return err(s,'房间尚未开始');let g=r.g,i=r.players.findIndex(p=>p.id===s.data.multiId);if(i<0)return err(s,'不在房间里');const otherI=1-i;function turn(){if(g.turn!==i)return err(s,'还没轮到你')}
 if(r.type==='battleship'){
@@ -35,8 +38,18 @@ if(r.type==='uno'){
 if(action==='draw'){turn();let d=g.deck;if(!d.length){g.deck=cards();d=g.deck;}g.hands[i].push(d.pop());g.log.push(r.players[i].name+' 摸一张');g.turn=otherI;send(r);return;}
 if(action==='play'){turn();let pos=g.hands[i].findIndex(c=>c.id===data.id);if(pos<0)return err(s,'没有这张牌');let c=g.hands[i][pos];if(c.c!==g.color&&c.n!==g.top.n&&c.c!=='黑')return err(s,'颜色或数字不匹配');if(c.c==='黑'&&!['红','黄','蓝','绿'].includes(data.color))return err(s,'万能牌请选颜色');g.hands[i].splice(pos,1);g.top=c;g.color=c.c==='黑'?data.color:c.c;g.log.push(r.players[i].name+' 出 '+c.c+c.n);if(g.hands[i].length===0)return end(r,i);if(c.n==='+2'||c.n==='+4'){let count=c.n==='+2'?2:4;for(let x=0;x<count;x++){if(!g.deck.length)g.deck=cards();g.hands[otherI].push(g.deck.pop())}g.turn=i;}else if(['跳过','反转'].includes(c.n)){g.turn=i;}else g.turn=otherI;send(r);return;}}
 if(r.type==='buckshot'){
-if(action==='item'){turn();let item=data.item,index=g.items[i].indexOf(item);if(index<0)return err(s,'没有这个道具');if(item==='放大镜'){g.peek[i]=g.shells.at(-1)?'实弹':'空弹';}else if(item==='香烟'){g.hp[i]=Math.min(5,g.hp[i]+1);}else return err(s,'无效道具');g.items[i].splice(index,1);send(r);return;}
-if(action==='fire'){turn();if(!['self','other'].includes(data.target))return err(s,'选择射击对象');let bullet=g.shells.pop();if(bullet)g.live--;else g.blank--;let hit=bullet===1,who=data.target==='self'?i:otherI;g.log.push(r.players[i].name+' 对 '+(data.target==='self'?'自己':'对手')+' 扣动虚拟扳机：'+(hit?'实弹！':'空弹'));if(hit)g.hp[who]--;g.peek=[null,null];if(g.hp[who]<=0)return end(r,other(r,who));if(!g.shells.length){newShells(g);g.items.forEach(a=>a.push(rnd(2)?'香烟':'放大镜'));}if(!(data.target==='self'&&!hit))g.turn=otherI;send(r);return;}}
+if(action==='nextRound'){if(r.phase!=='round_end')return err(s,'当前不能开始下一局');g.round++;startBuckRound(g);r.phase='play';send(r);return;}
+if(r.phase!=='play')return err(s,'当前局已结束');
+if(action==='item'){if(g.turn!==i)return err(s,'还没轮到你');let item=String(data.item||''),index=g.items[i].indexOf(item);if(index<0)return err(s,'没有这个道具');if(item==='放大镜'){g.peek[i]=g.shells.at(-1)?'实弹':'空弹';}
+else if(item==='香烟'){if(g.hp[i]>=4)return err(s,'生命值已经满了');g.hp[i]++;}
+else if(item==='啤酒'){let shell=g.shells.pop();if(shell)g.live--;else g.blank--;g.peek=[null,null];g.history.push({kind:'eject',round:g.round,by:i,bullet:shell,batch:g.ammoBatch});g.log.push(r.players[i].name+' 用啤酒退掉 '+(shell?'实弹':'空弹'));if(!g.shells.length)newShells(g);}
+else if(item==='手铐'){if(g.locked===otherI)return err(s,'对手已经被手铐限制');g.locked=otherI;}
+else if(item==='手锯'){if(g.sawed===i)return err(s,'本发已经使用手锯');g.sawed=i;}
+else return err(s,'无效道具');g.items[i].splice(index,1);g.log.push(r.players[i].name+' 使用 '+item);send(r);return;}
+if(action==='fire'){if(g.turn!==i)return err(s,'还没轮到你');if(!['self','other'].includes(data.target))return err(s,'选择射击对象');let bullet=g.shells.pop();if(bullet===undefined)return err(s,'弹匣为空');if(bullet)g.live--;else g.blank--;let who=data.target==='self'?i:otherI,damage=bullet?(g.sawed===i?2:1):0;g.hp[who]=Math.max(0,g.hp[who]-damage);g.sawed=null;g.peek=[null,null];g.lastShot={by:i,target:who,bullet,damage,round:g.round,id:++g.shotId};g.history.push({kind:'fire',...g.lastShot,batch:g.ammoBatch});g.log.push(r.players[i].name+' 朝 '+(who===i?'自己':'对手')+' 射击：'+(bullet?'实弹 -'+damage+' HP':'空弹'));if(g.hp[who]<=0)return buckRoundEnd(r,who);
+let keepsTurn=data.target==='self'&&!bullet;
+if(!keepsTurn){if(g.locked===otherI){g.locked=null;g.turn=i;g.log.push(r.players[otherI].name+' 被手铐跳过行动');}else{g.locked=null;g.turn=otherI;}}
+if(!g.shells.length)newShells(g);send(r);return;}}
 if(r.type==='doudizhu'){
 if(action==='pass'){turn();if(!g.last||g.last.by===i)return err(s,'当前不能不要');g.log.push(r.players[i].name+' 不要');g.last=null;g.turn=otherI;send(r);return;}
 if(action==='play'){turn();let ids=data.ids;if(!Array.isArray(ids)||ids.length<1||new Set(ids).size!==ids.length)return err(s,'请选择牌');let selected=ids.map(id=>g.hands[i].find(c=>c.id===id));if(selected.some(x=>!x))return err(s,'无效手牌');let same=selected.every(c=>c.n===selected[0].n);let rocket=selected.length===2&&selected.some(c=>c.n==='小王')&&selected.some(c=>c.n==='大王');if(!same&&!rocket)return err(s,'当前支持单张、对子、三张、炸弹及王炸');let level=rocket?99:ranks.indexOf(selected[0].n),strength=rocket?5:selected.length;
