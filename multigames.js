@@ -23,8 +23,8 @@ if(r.type==='buckshot'){g.round=1;g.wins=[0,0];startBuckRound(g);}
 if(r.type==='doudizhu'){let d=poker();g.hands=[d.splice(0,17),d.splice(0,17)];g.landlord=rnd(2);g.turn=g.landlord;g.last=null;g.passes=0;}
 r.g=g;send(r)}
 const buckItems=['放大镜','香烟','啤酒','手铐','手锯'];
-function newShells(g){let n=4+rnd(4),live=1+rnd(n);g.shells=shuffle(Array(live).fill(1).concat(Array(n-live).fill(0)));g.live=live;g.blank=n-live;g.peek=[null,null];g.ammoBatch=(g.ammoBatch||0)+1;g.history.push({kind:'reload',round:g.round,batch:g.ammoBatch,live,blank:n-live});g.items.forEach(a=>{while(a.length<4)a.push(buckItems[rnd(buckItems.length)])});}
-function startBuckRound(g){g.hp=[4,4];g.items=[[],[]];g.peek=[null,null];g.sawed=null;g.locked=null;g.roundWinner=null;g.turn=(g.round-1)%2;g.ammoBatch=0;g.history=[];g.lastShot=null;g.shotId=0;newShells(g);g.log.push('第 '+g.round+' 局开始，双方恢复至 4 HP');}
+function newShells(g){let n=Math.min(6,3+g.round),live=Math.floor(n/2)+(n%2?rnd(2):0);g.shells=shuffle(Array(live).fill(1).concat(Array(n-live).fill(0)));g.live=live;g.blank=n-live;g.peek=[null,null];g.ammoBatch=(g.ammoBatch||0)+1;g.history.push({kind:'reload',round:g.round,batch:g.ammoBatch,live,blank:n-live});g.items.forEach(a=>{while(a.length<4)a.push(buckItems[rnd(buckItems.length)])});}
+function startBuckRound(g){g.hp=[4,4];g.items=[[],[]];g.peek=[null,null];g.sawed=null;g.locked=null;g.roundWinner=null;g.turn=(g.round-1)%2;g.ammoBatch=0;g.history=[];g.lastShot=null;g.shotId=g.shotId||0;newShells(g);g.log.push('第 '+g.round+' 局开始，双方恢复至 4 HP');}
 function buckRoundEnd(r,loser){let g=r.g,w=1-loser;g.wins[w]++;g.roundWinner=w;g.log.push(r.players[w].name+' 赢得第 '+g.round+' 局');if(g.wins[w]===2){g.winner=w;r.phase='finished';}else{r.phase='round_end';}send(r)}
 function end(r,w){r.g.winner=w;r.phase='finished';send(r)}
 function act(s,action,data={}){let r=get(s);if(!r||r.phase==='lobby')return err(s,'房间尚未开始');let g=r.g,i=r.players.findIndex(p=>p.id===s.data.multiId);if(i<0)return err(s,'不在房间里');const otherI=1-i;function turn(){if(g.turn!==i)return err(s,'还没轮到你')}
